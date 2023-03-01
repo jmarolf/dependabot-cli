@@ -8,6 +8,7 @@ import (
 	"io"
 	"log"
 	"os"
+	"strings"
 
 	"github.com/MakeNowJust/heredoc"
 	"github.com/dependabot/cli/internal/infra"
@@ -165,6 +166,7 @@ func processInput(input *model.Input) {
 	// As a convenience, fill in a git_source if credentials are in the environment and a git_source
 	// doesn't already exist. This way the user doesn't run out of calls from being anonymous.
 	hasLocalToken := os.Getenv("LOCAL_GITHUB_ACCESS_TOKEN") != ""
+	hasLocalAzureToken := os.Getenv("LOCAL_AZURE_ACCESS_TOKEN") != ""
 	var isGitSourceInCreds bool
 	for _, cred := range input.Credentials {
 		if cred["type"] == "git_source" {
@@ -185,6 +187,50 @@ func processInput(input *model.Input) {
 			input.Job.CredentialsMetadata = append(input.Job.CredentialsMetadata, map[string]any{
 				"type": "git_source",
 				"host": "github.com",
+			})
+		}
+	}
+	if hasLocalAzureToken && !isGitSourceInCreds {
+		log.Println("Inserting $LOCAL_AZURE_ACCESS_TOKEN into credentials")
+		adoOrgName := strings.Split(repo, "/")[0]
+		log.Println("Inserting artifacts credentials for " + adoOrgName + " organization.")
+		input.Credentials = append(input.Credentials, model.Credential{
+			"type":     "git_source",
+			"host":     "dev.azure.com",
+			"username": "x-access-token",
+			"password": "$LOCAL_AZURE_ACCESS_TOKEN",
+		})
+		if len(input.Job.CredentialsMetadata) > 0 {
+			// Add the metadata since the next section will be skipped.
+			input.Job.CredentialsMetadata = append(input.Job.CredentialsMetadata, map[string]any{
+				"type": "git_source",
+				"host": "dev.azure.com",
+			})
+		}
+		input.Credentials = append(input.Credentials, model.Credential{
+			"type":     "git_source",
+			"host":     adoOrgName + ".pkgs.visualstudio.com",
+			"username": "x-access-token",
+			"password": "$LOCAL_AZURE_ACCESS_TOKEN",
+		})
+		if len(input.Job.CredentialsMetadata) > 0 {
+			// Add the metadata since the next section will be skipped.
+			input.Job.CredentialsMetadata = append(input.Job.CredentialsMetadata, map[string]any{
+				"type": "git_source",
+				"host": adoOrgName + ".pkgs.visualstudio.com",
+			})
+		}
+		input.Credentials = append(input.Credentials, model.Credential{
+			"type":     "git_source",
+			"host":     "pkgs.dev.azure.com",
+			"username": "x-access-token",
+			"password": "$LOCAL_AZURE_ACCESS_TOKEN",
+		})
+		if len(input.Job.CredentialsMetadata) > 0 {
+			// Add the metadata since the next section will be skipped.
+			input.Job.CredentialsMetadata = append(input.Job.CredentialsMetadata, map[string]any{
+				"type": "git_source",
+				"host": "pkgs.dev.azure.com",
 			})
 		}
 	}
@@ -229,8 +275,8 @@ func init() {
 	updateCmd.Flags().StringVarP(&provider, "provider", "p", "github", "provider of the repository")
 	updateCmd.Flags().StringVarP(&directory, "directory", "d", "/", "directory to update")
 
-	updateCmd.Flags().BoolVar(&dryRun, "dry-run", true, "perform update as a dry run")
-	_ = updateCmd.MarkFlagRequired("dry-run")
+	updateCmd.Flags().BoolVar(&dryRun, "dry-run", false, "perform update as a dry run")
+	// _ = updateCmd.MarkFlagRequired("dry-run")
 
 	updateCmd.Flags().StringVarP(&output, "output", "o", "", "write scenario to file")
 	updateCmd.Flags().StringVar(&cache, "cache", "", "cache import/export directory")

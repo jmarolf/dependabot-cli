@@ -112,6 +112,7 @@ func (a *API) ServeHTTP(_ http.ResponseWriter, r *http.Request) {
 	parts := strings.Split(r.URL.String(), "/")
 	kind := parts[len(parts)-1]
 	actual, err := decodeWrapper(kind, data)
+	log.Println(actual)
 	if err != nil {
 		a.pushError(err)
 	}
