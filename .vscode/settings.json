@@ -1,0 +1,4 @@
+{
+    "go.enableCodeLens": {},
+    "go.lintTool": "golangci-lint"
+}

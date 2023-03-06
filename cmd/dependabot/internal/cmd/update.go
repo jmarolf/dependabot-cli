@@ -15,6 +15,8 @@ import (
 	"github.com/dependabot/cli/internal/model"
 	"github.com/dependabot/cli/internal/server"
 	"github.com/spf13/cobra"
+	"github.com/spf13/pflag"
+	"github.com/spf13/viper"
 	"gopkg.in/yaml.v3"
 )
 
@@ -26,6 +28,8 @@ var (
 
 	dryRun          bool
 	inputServerPort int
+	// EnvPrefix The environment variable prefix of all environment variables bound to our command line flags.
+	EnvPrefix = "DEPENDABOT"
 )
 
 var updateCmd = &cobra.Command{
@@ -34,6 +38,7 @@ var updateCmd = &cobra.Command{
 	Example: heredoc.Doc(`
 		    $ dependabot update go_modules rsc/quote --dry-run
 	    `),
+	PreRunE: bindViper,
 	RunE: func(cmd *cobra.Command, args []string) error {
 		var outFile *os.File
 		if output != "" {
@@ -65,30 +70,30 @@ var updateCmd = &cobra.Command{
 			if repo == "" {
 				return errors.New("requires a repo argument")
 			}
+		}
 
-			input.Job = model.Job{
-				PackageManager: packageManager,
-				AllowedUpdates: []model.Allowed{{
-					UpdateType: "all",
-				}},
-				Dependencies:               nil,
-				ExistingPullRequests:       [][]model.ExistingPR{},
-				IgnoreConditions:           []model.Condition{},
-				LockfileOnly:               false,
-				RequirementsUpdateStrategy: nil,
-				SecurityAdvisories:         []model.Advisory{},
-				SecurityUpdatesOnly:        false,
-				Source: model.Source{
-					Provider:    provider,
-					Repo:        repo,
-					Directory:   directory,
-					Branch:      nil,
-					Hostname:    nil,
-					APIEndpoint: nil,
-				},
-				UpdateSubdependencies: false,
-				UpdatingAPullRequest:  false,
-			}
+		input.Job = model.Job{
+			PackageManager: packageManager,
+			AllowedUpdates: []model.Allowed{{
+				UpdateType: "all",
+			}},
+			Dependencies:               nil,
+			ExistingPullRequests:       [][]model.ExistingPR{},
+			IgnoreConditions:           []model.Condition{},
+			LockfileOnly:               false,
+			RequirementsUpdateStrategy: nil,
+			SecurityAdvisories:         []model.Advisory{},
+			SecurityUpdatesOnly:        false,
+			Source: model.Source{
+				Provider:    provider,
+				Repo:        repo,
+				Directory:   directory,
+				Branch:      nil,
+				Hostname:    nil,
+				APIEndpoint: nil,
+			},
+			UpdateSubdependencies: false,
+			UpdatingAPullRequest:  false,
 		}
 
 		if inputServerPort != 0 {
@@ -270,10 +275,17 @@ func doesStdinHaveData() bool {
 func init() {
 	rootCmd.AddCommand(updateCmd)
 
+	viper.AutomaticEnv()
+
 	updateCmd.Flags().StringVarP(&file, "file", "f", "", "path to scenario file")
 
 	updateCmd.Flags().StringVarP(&provider, "provider", "p", "github", "provider of the repository")
+
 	updateCmd.Flags().StringVarP(&directory, "directory", "d", "/", "directory to update")
+
+	updateCmd.Flags().StringVarP(&repo, "repo", "r", "", "the repo to run dependabot on")
+
+	updateCmd.Flags().StringVarP(&packageManager, "package-manager", "m", "", "package manager for the given directory")
 
 	updateCmd.Flags().BoolVar(&dryRun, "dry-run", false, "perform update as a dry run")
 	// _ = updateCmd.MarkFlagRequired("dry-run")
@@ -287,4 +299,39 @@ func init() {
 	updateCmd.Flags().StringArrayVar(&extraHosts, "extra-hosts", nil, "Docker extra hosts setting on the proxy")
 	updateCmd.Flags().DurationVarP(&timeout, "timeout", "t", 0, "max time to run an update")
 	updateCmd.Flags().IntVar(&inputServerPort, "input-port", 0, "port to use for securely passing input to the updater")
+}
+
+// Viper binding is sourced from: https://github.com/kubereboot/kured/pull/464
+// bindViper initializes viper and binds command flags with environment variables
+func bindViper(cmd *cobra.Command, args []string) error {
+	v := viper.New()
+
+	v.SetEnvPrefix(EnvPrefix)
+	v.AutomaticEnv()
+	bindFlags(cmd, v)
+
+	return nil
+}
+
+// bindFlags binds each cobra flag to its associated viper configuration (environment variable)
+func bindFlags(cmd *cobra.Command, v *viper.Viper) {
+	cmd.Flags().VisitAll(func(f *pflag.Flag) {
+		// Environment variables can't have dashes in them, so bind them to their equivalent keys with underscores
+		if strings.Contains(f.Name, "-") {
+			v.BindEnv(f.Name, flagToEnvVar(f.Name))
+		}
+
+		// Apply the viper config value to the flag when the flag is not set and viper has a value
+		if !f.Changed && v.IsSet(f.Name) {
+			val := v.Get(f.Name)
+			log.Printf("Binding %s command flag to environment variable: %s=%s", f.Name, flagToEnvVar(f.Name), fmt.Sprintf("%v", val))
+			cmd.Flags().Set(f.Name, fmt.Sprintf("%v", val))
+		}
+	})
+}
+
+// flagToEnvVar converts command flag name to equivalent environment variable name
+func flagToEnvVar(flag string) string {
+	envVarSuffix := strings.ToUpper(strings.ReplaceAll(flag, "-", "_"))
+	return fmt.Sprintf("%s_%s", EnvPrefix, envVarSuffix)
 }

@@ -1,0 +1,17 @@
+{
+	"version": "0.2.0",
+	"configurations": [
+		{
+			"name": "dependabot",
+			"type": "go",
+			"request": "launch",
+			"mode": "auto",
+			"program": "${workspaceFolder}/cmd/dependabot",
+			"cwd": "${workspaceFolder}",
+            "envFile": "${workspaceFolder}/.env",
+			"args": [
+				"update"
+			]
+		}
+	]
+}
