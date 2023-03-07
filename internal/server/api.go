@@ -19,7 +19,7 @@ import (
 	"time"
 
 	"github.com/dependabot/cli/internal/model"
-	"github.com/dependabot/cli/internal/provider"
+	"github.com/dependabot/cli/internal/repo"
 	"gopkg.in/yaml.v3"
 )
 
@@ -37,12 +37,12 @@ type API struct {
 	hasExpectations bool
 	port            int
 
-	provider provider.Provider
+	provider repo.Provider
 	dryRun   bool
 }
 
 // NewAPI creates a new API instance and starts the server
-func NewAPI(expected []model.Output, provider provider.Provider, dryRun bool) *API {
+func NewAPI(expected []model.Output, provider repo.Provider, dryRun bool) *API {
 	fakeAPIHost := "127.0.0.1"
 	if runtime.GOOS == "linux" {
 		fakeAPIHost = "0.0.0.0"

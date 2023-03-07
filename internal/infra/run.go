@@ -14,7 +14,7 @@ import (
 	"time"
 
 	"github.com/dependabot/cli/internal/model"
-	"github.com/dependabot/cli/internal/provider"
+	"github.com/dependabot/cli/internal/repo"
 	"github.com/dependabot/cli/internal/server"
 	"github.com/docker/docker/api/types"
 	"github.com/moby/moby/client"
@@ -49,6 +49,8 @@ type RunParams struct {
 	UpdaterImage string
 	// ProxyImage is the image to use for the proxy
 	ProxyImage string
+	// The provider for managing a repo
+	Provider *repo.Provider
 	// Indicates whether to perform the job as a dry run
 	DryRun bool
 }
@@ -69,8 +71,7 @@ func Run(params RunParams) error {
 	}()
 
 	// TODO: Swap the provider based on input
-	provider := provider.NewAzureProvider(params.Job.PackageManager, params.Job.Source.Repo, params.Job.Source.Directory, params.Creds)
-	api := server.NewAPI(params.Expected, provider, params.DryRun)
+	api := server.NewAPI(params.Expected, *params.Provider, params.DryRun)
 	defer api.Stop()
 
 	var outFile *os.File

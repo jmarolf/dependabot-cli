@@ -13,6 +13,7 @@ import (
 	"github.com/MakeNowJust/heredoc"
 	"github.com/dependabot/cli/internal/infra"
 	"github.com/dependabot/cli/internal/model"
+	arp "github.com/dependabot/cli/internal/repo/azure"
 	"github.com/dependabot/cli/internal/server"
 	"github.com/spf13/cobra"
 	"github.com/spf13/pflag"
@@ -116,6 +117,9 @@ var updateCmd = &cobra.Command{
 
 		processInput(input)
 
+		rp := arp.NewAzureProvider(packageManager, repo, directory, input.Credentials)
+		input.Job.ExistingPullRequests = rp.GetExistingPRs()
+
 		if err := infra.Run(infra.RunParams{
 			CacheDir:      cache,
 			Creds:         input.Credentials,
@@ -130,6 +134,7 @@ var updateCmd = &cobra.Command{
 			Timeout:       timeout,
 			UpdaterImage:  updaterImage,
 			Volumes:       volumes,
+			Provider:      &rp,
 			DryRun:        dryRun,
 		}); err != nil {
 			log.Fatalf("failed to run updater: %v", err)

@@ -1,4 +1,4 @@
-package provider
+package azure
 
 import (
 	"bytes"
@@ -8,9 +8,11 @@ import (
 	"log"
 	"net/http"
 	"os"
+	"regexp"
 	"strings"
 
 	"github.com/dependabot/cli/internal/model"
+	"github.com/dependabot/cli/internal/repo"
 )
 
 type azureRepo struct {
@@ -28,7 +30,7 @@ type azureProvider struct {
 }
 
 // NewAPI creates a new API instance and starts the server
-func NewAzureProvider(packageManager string, repo string, directory string, credentials []model.Credential) Provider {
+func NewAzureProvider(packageManager string, repo string, directory string, credentials []model.Credential) repo.Provider {
 	cred := findCredentialForDomain(credentials, "dev.azure.com") // TODO: Switch the domain based on the provider
 	repoParts := strings.Split(repo, "/")
 	return &azureProvider{
@@ -41,6 +43,23 @@ func NewAzureProvider(packageManager string, repo string, directory string, cred
 			cred:          cred,
 		},
 		creds: credentials,
+	}
+}
+
+func (a *azureProvider) GetExistingPRs() [][]model.ExistingPR {
+	getRefsUrl := fmt.Sprintf("https://dev.azure.com/%s/%s/_apis/git/repositories/%s/refs?filter=heads/dependabot/&filterContains=%s&api-version=7.1-preview.1", a.repo.org, a.repo.project, a.repo.repo, a.repo.directory)
+	_, resp, err := sendHttpRequestWithResp[refListResponse]("GET", getRefsUrl, a.repo.cred, nil)
+	if err != nil {
+		return [][]model.ExistingPR{}
+	}
+
+	var existingPRs []model.ExistingPR
+	for _, v := range resp.Value {
+		existingPRs = append(existingPRs, parseDependencyVersion(a.repo.directory, v.Name))
+	}
+
+	return [][]model.ExistingPR{
+		existingPRs,
 	}
 }
 
@@ -98,15 +117,26 @@ func (a *azureProvider) CreatePullRequest(m model.CreatePullRequest) (err error)
 	return
 }
 
-func sendHttpRequest(method string, url string, cred model.Credential, body any) (resp any, err error) {
+func sendHttpRequest(method string, url string, cred model.Credential, body any) (statusCode int, err error) {
+	statusCode, _, err = sendHttpRequestWithResp[interface{}](method, url, cred, body)
+	return
+}
+
+func sendHttpRequestWithResp[V any](method string, url string, cred model.Credential, body any) (statusCode int, respBody V, err error) {
 	client := &http.Client{}
-	w := new(bytes.Buffer)
-	err = json.NewEncoder(w).Encode(body)
-	if err != nil {
-		return
+
+	var req *http.Request
+	if body != nil {
+		w := new(bytes.Buffer)
+		err = json.NewEncoder(w).Encode(body)
+		if err != nil {
+			return
+		}
+		req, err = http.NewRequest(method, url, w)
+	} else {
+		req, err = http.NewRequest(method, url, nil)
 	}
 
-	req, err := http.NewRequest(method, url, w)
 	if err != nil {
 		return
 	}
@@ -119,18 +149,13 @@ func sendHttpRequest(method string, url string, cred model.Credential, body any)
 
 	response, err := client.Do(req)
 	if err != nil {
-		resp = response
+		return
 	}
 
-	// TODO: Remove this code chunk.  It's only for debugging
+	statusCode = response.StatusCode
+
 	log.Println(response.Status)
-	var r interface{}
-	err = json.NewDecoder(response.Body).Decode(&r)
-	log.Println(r)
-
-	if err != nil {
-		resp = response
-	}
+	err = json.NewDecoder(response.Body).Decode(&respBody)
 
 	return
 }
@@ -166,4 +191,20 @@ func generateBranchName(r azureRepo, d model.Dependency) string {
 	dependencyName := d.Name
 	dependencyVersion := *d.Version
 	return fmt.Sprintf("refs/heads/dependabot/%s%s%s-%s", r.packageManger, directory, dependencyName, dependencyVersion)
+}
+
+func parseDependencyVersion(directory string, refName string) model.ExistingPR {
+	var refNameExp = regexp.MustCompile(`\/(?P<name>[^\/-]*)-(?P<version>[^\/]*)$`)
+	match := refNameExp.FindStringSubmatch(refName)
+	result := make(map[string]string)
+	for i, name := range refNameExp.SubexpNames() {
+		if i != 0 && name != "" {
+			result[name] = match[i]
+		}
+	}
+
+	return model.ExistingPR{
+		DependencyName:    result["name"],
+		DependencyVersion: result["version"],
+	}
 }
