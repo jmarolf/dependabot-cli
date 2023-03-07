@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"crypto/sha256"
+	"encoding/base64"
 	"encoding/hex"
 	"encoding/json"
 	"errors"
@@ -35,10 +36,14 @@ type API struct {
 	cursor          int
 	hasExpectations bool
 	port            int
+
+	repo   string
+	creds  []model.Credential
+	dryRun bool
 }
 
 // NewAPI creates a new API instance and starts the server
-func NewAPI(expected []model.Output) *API {
+func NewAPI(expected []model.Output, repo string, credentials []model.Credential, dryRun bool) *API {
 	fakeAPIHost := "127.0.0.1"
 	if runtime.GOOS == "linux" {
 		fakeAPIHost = "0.0.0.0"
@@ -63,6 +68,9 @@ func NewAPI(expected []model.Output) *API {
 		cursor:          0,
 		hasExpectations: len(expected) > 0,
 		port:            l.Addr().(*net.TCPAddr).Port,
+		repo:            repo,
+		creds:           credentials,
+		dryRun:          dryRun,
 	}
 	server.Handler = api
 
@@ -112,7 +120,10 @@ func (a *API) ServeHTTP(_ http.ResponseWriter, r *http.Request) {
 	parts := strings.Split(r.URL.String(), "/")
 	kind := parts[len(parts)-1]
 	actual, err := decodeWrapper(kind, data)
-	log.Println(actual)
+	if !a.dryRun {
+		a.sendUpdateWrapper(actual)
+	}
+
 	if err != nil {
 		a.pushError(err)
 	}
@@ -313,4 +324,126 @@ func compareRecordUpdateJobError(expect, actual model.RecordUpdateJobError) erro
 		return nil
 	}
 	return unexpectedBody("record_update_job_error")
+}
+
+func (a *API) sendUpdateWrapper(m *model.UpdateWrapper) (err error) {
+	cred := findCredentialForDomain(a.creds, "dev.azure.com") // TODO: Switch the domain based on the provider
+	repoParts := strings.Split(a.repo, "/")
+	adoOrg := repoParts[0]
+	adoProject := repoParts[1]
+	adoRepo := repoParts[3]
+
+	switch m.Data.(type) {
+	case model.CreatePullRequest:
+		createContent := m.Data.(model.CreatePullRequest)
+		dependencyName := createContent.Dependencies[0].Name
+		dependencyVersion := createContent.Dependencies[0].Version
+
+		branchName := fmt.Sprintf("refs/heads/dependabot/%s/%s", dependencyName, *dependencyVersion)
+
+		var fileChanges []interface{}
+		for _, v := range createContent.UpdatedDependencyFiles {
+			fileChanges = append(fileChanges, map[string]interface{}{
+				"changeType": "edit",
+				"item": map[string]interface{}{
+					"path": v.Name,
+				},
+				"newContent": map[string]interface{}{
+					"content":     base64.StdEncoding.EncodeToString([]byte(v.Content)),
+					"contentType": "base64encoded",
+				},
+			})
+		}
+
+		branchCreateBody := map[string]interface{}{
+			"refUpdates": []interface{}{
+				map[string]interface{}{
+					"name":        branchName,
+					"oldObjectId": createContent.BaseCommitSha,
+				},
+			},
+			"commits": []interface{}{
+				map[string]interface{}{
+					"comment": createContent.CommitMessage,
+					"changes": fileChanges,
+				},
+			},
+		}
+		createBranchRequestUrl := fmt.Sprintf("https://dev.azure.com/%s/%s/_apis/git/repositories/%s/pushes?api-version=7.1-preview.2", adoOrg, adoProject, adoRepo)
+		_, err = sendHttpRequest("POST", createBranchRequestUrl, cred, branchCreateBody)
+		if err != nil {
+			return
+		}
+
+		prCreateBody := map[string]interface{}{
+			"sourceRefName": branchName,
+			"targetRefName": "refs/heads/main", // TODO: This needs to detect the default branch
+			"title":         createContent.PRTitle,
+			"description":   createContent.PRBody,
+		}
+		createPrRequestUrl := fmt.Sprintf("https://dev.azure.com/%s/%s/_apis/git/repositories/%s/pullrequests?api-version=7.1-preview.1", adoOrg, adoProject, adoRepo)
+		_, err = sendHttpRequest("POST", createPrRequestUrl, cred, prCreateBody)
+		if err != nil {
+			return
+		}
+	default:
+		err = nil
+		return
+	}
+
+	return
+}
+
+func sendHttpRequest(method string, url string, cred model.Credential, body any) (resp any, err error) {
+	client := &http.Client{}
+	w := new(bytes.Buffer)
+	err = json.NewEncoder(w).Encode(body)
+	if err != nil {
+		return
+	}
+
+	req, err := http.NewRequest(method, url, w)
+	if err != nil {
+		return
+	}
+
+	req.Header.Add("Content-Type", "application/json")
+
+	if cred != nil {
+		req.SetBasicAuth(cred["username"].(string), cred["password"].(string))
+	}
+
+	response, err := client.Do(req)
+	if err != nil {
+		resp = response
+	}
+
+	// TODO: Remove this code chunk.  It's only for debugging
+	log.Println(response.Status)
+	var r interface{}
+	err = json.NewDecoder(response.Body).Decode(&r)
+	log.Println(r)
+
+	if err != nil {
+		resp = response
+	}
+
+	return
+}
+
+func findCredentialForDomain(creds []model.Credential, domain string) model.Credential {
+	for _, v := range creds {
+		if v["host"].(string) == domain {
+			// Make a copy to expand the secret
+			var cred = model.Credential{}
+			for key, value := range v {
+				if valueString, ok := value.(string); ok {
+					cred[key] = os.ExpandEnv(valueString)
+				}
+			}
+			return cred
+		}
+	}
+
+	return nil
 }

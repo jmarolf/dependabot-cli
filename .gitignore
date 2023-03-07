@@ -3,3 +3,4 @@ testdata/caches
 cache
 out.yaml
 .env
+bin

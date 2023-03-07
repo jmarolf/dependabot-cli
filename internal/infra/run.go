@@ -48,6 +48,8 @@ type RunParams struct {
 	UpdaterImage string
 	// ProxyImage is the image to use for the proxy
 	ProxyImage string
+	// Indicates whether to perform the job as a dry run
+	DryRun bool
 }
 
 func Run(params RunParams) error {
@@ -65,7 +67,7 @@ func Run(params RunParams) error {
 		cancel()
 	}()
 
-	api := server.NewAPI(params.Expected)
+	api := server.NewAPI(params.Expected, params.Job.Source.Repo, params.Creds, params.DryRun)
 	defer api.Stop()
 
 	var outFile *os.File

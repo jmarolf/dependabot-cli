@@ -130,6 +130,7 @@ var updateCmd = &cobra.Command{
 			Timeout:       timeout,
 			UpdaterImage:  updaterImage,
 			Volumes:       volumes,
+			DryRun:        dryRun,
 		}); err != nil {
 			log.Fatalf("failed to run updater: %v", err)
 		}
@@ -288,7 +289,6 @@ func init() {
 	updateCmd.Flags().StringVarP(&packageManager, "package-manager", "m", "", "package manager for the given directory")
 
 	updateCmd.Flags().BoolVar(&dryRun, "dry-run", false, "perform update as a dry run")
-	// _ = updateCmd.MarkFlagRequired("dry-run")
 
 	updateCmd.Flags().StringVarP(&output, "output", "o", "", "write scenario to file")
 	updateCmd.Flags().StringVar(&cache, "cache", "", "cache import/export directory")
