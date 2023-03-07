@@ -14,6 +14,7 @@ import (
 	"time"
 
 	"github.com/dependabot/cli/internal/model"
+	"github.com/dependabot/cli/internal/provider"
 	"github.com/dependabot/cli/internal/server"
 	"github.com/docker/docker/api/types"
 	"github.com/moby/moby/client"
@@ -67,7 +68,9 @@ func Run(params RunParams) error {
 		cancel()
 	}()
 
-	api := server.NewAPI(params.Expected, params.Job.Source.Repo, params.Creds, params.DryRun)
+	// TODO: Swap the provider based on input
+	provider := provider.NewAzureProvider(params.Job.Source.Repo, params.Creds)
+	api := server.NewAPI(params.Expected, provider, params.DryRun)
 	defer api.Stop()
 
 	var outFile *os.File
