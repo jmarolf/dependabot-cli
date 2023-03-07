@@ -69,7 +69,7 @@ func Run(params RunParams) error {
 	}()
 
 	// TODO: Swap the provider based on input
-	provider := provider.NewAzureProvider(params.Job.Source.Repo, params.Creds)
+	provider := provider.NewAzureProvider(params.Job.PackageManager, params.Job.Source.Repo, params.Job.Source.Directory, params.Creds)
 	api := server.NewAPI(params.Expected, provider, params.DryRun)
 	defer api.Stop()
 

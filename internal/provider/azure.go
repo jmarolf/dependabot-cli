@@ -13,38 +13,48 @@ import (
 	"github.com/dependabot/cli/internal/model"
 )
 
+type azureRepo struct {
+	packageManger string
+	org           string
+	project       string
+	repo          string
+	directory     string
+	cred          model.Credential
+}
+
 type azureProvider struct {
-	repo  string
+	repo  azureRepo
 	creds []model.Credential
 }
 
 // NewAPI creates a new API instance and starts the server
-func NewAzureProvider(repo string, credentials []model.Credential) Provider {
+func NewAzureProvider(packageManager string, repo string, directory string, credentials []model.Credential) Provider {
+	cred := findCredentialForDomain(credentials, "dev.azure.com") // TODO: Switch the domain based on the provider
+	repoParts := strings.Split(repo, "/")
 	return &azureProvider{
-		repo:  repo,
+		repo: azureRepo{
+			packageManger: packageManager,
+			org:           repoParts[0],
+			project:       repoParts[1],
+			repo:          repoParts[3],
+			directory:     directory,
+			cred:          cred,
+		},
 		creds: credentials,
 	}
 }
 
 // Port returns the port the API is listening on
 func (a *azureProvider) CreatePullRequest(m model.CreatePullRequest) (err error) {
-	cred := findCredentialForDomain(a.creds, "dev.azure.com") // TODO: Switch the domain based on the provider
-	repoParts := strings.Split(a.repo, "/")
-	adoOrg := repoParts[0]
-	adoProject := repoParts[1]
-	adoRepo := repoParts[3]
-	dependencyName := m.Dependencies[0].Name
-	dependencyVersion := m.Dependencies[0].Version
-
 	// TODO: This branch name should take the directory that dependabot started from into account to avoid branch conflicts.
-	branchName := fmt.Sprintf("refs/heads/dependabot/%s/%s", dependencyName, *dependencyVersion)
+	branchName := generateBranchName(a.repo, m.Dependencies[0])
 
 	var fileChanges []interface{}
 	for _, v := range m.UpdatedDependencyFiles {
 		fileChanges = append(fileChanges, map[string]interface{}{
 			"changeType": "edit",
 			"item": map[string]interface{}{
-				"path": v.Name,
+				"path": v.Directory + "/" + v.Name,
 			},
 			"newContent": map[string]interface{}{
 				"content":     base64.StdEncoding.EncodeToString([]byte(v.Content)),
@@ -67,8 +77,8 @@ func (a *azureProvider) CreatePullRequest(m model.CreatePullRequest) (err error)
 			},
 		},
 	}
-	createBranchRequestUrl := fmt.Sprintf("https://dev.azure.com/%s/%s/_apis/git/repositories/%s/pushes?api-version=7.1-preview.2", adoOrg, adoProject, adoRepo)
-	_, err = sendHttpRequest("POST", createBranchRequestUrl, cred, branchCreateBody)
+	createBranchRequestUrl := fmt.Sprintf("https://dev.azure.com/%s/%s/_apis/git/repositories/%s/pushes?api-version=7.1-preview.2", a.repo.org, a.repo.project, a.repo.repo)
+	_, err = sendHttpRequest("POST", createBranchRequestUrl, a.repo.cred, branchCreateBody)
 	if err != nil {
 		return
 	}
@@ -79,8 +89,8 @@ func (a *azureProvider) CreatePullRequest(m model.CreatePullRequest) (err error)
 		"title":         m.PRTitle,
 		"description":   m.PRBody,
 	}
-	createPrRequestUrl := fmt.Sprintf("https://dev.azure.com/%s/%s/_apis/git/repositories/%s/pullrequests?api-version=7.1-preview.1", adoOrg, adoProject, adoRepo)
-	_, err = sendHttpRequest("POST", createPrRequestUrl, cred, prCreateBody)
+	createPrRequestUrl := fmt.Sprintf("https://dev.azure.com/%s/%s/_apis/git/repositories/%s/pullrequests?api-version=7.1-preview.1", a.repo.org, a.repo.project, a.repo.repo)
+	_, err = sendHttpRequest("POST", createPrRequestUrl, a.repo.cred, prCreateBody)
 	if err != nil {
 		return
 	}
@@ -140,4 +150,20 @@ func findCredentialForDomain(creds []model.Credential, domain string) model.Cred
 	}
 
 	return nil
+}
+
+func generateBranchName(r azureRepo, d model.Dependency) string {
+	directory := r.directory
+
+	// Ensure that the directory always has a leading and a trailing slash
+	if !strings.HasPrefix(directory, "/") {
+		directory = "/" + directory
+	}
+	if !strings.HasSuffix(directory, "/") {
+		directory = directory + "/"
+	}
+
+	dependencyName := d.Name
+	dependencyVersion := *d.Version
+	return fmt.Sprintf("refs/heads/dependabot/%s%s%s-%s", r.packageManger, directory, dependencyName, dependencyVersion)
 }
