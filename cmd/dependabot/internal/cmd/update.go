@@ -118,7 +118,6 @@ var updateCmd = &cobra.Command{
 		processInput(input)
 
 		rp := arp.NewAzureProvider(packageManager, repo, directory, input.Credentials)
-		input.Job.ExistingPullRequests = [][]model.ExistingPR{rp.GetExistingPRs()}
 
 		if err := infra.Run(infra.RunParams{
 			CacheDir:      cache,
