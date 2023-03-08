@@ -117,13 +117,17 @@ func (a *API) ServeHTTP(_ http.ResponseWriter, r *http.Request) {
 
 	parts := strings.Split(r.URL.String(), "/")
 	kind := parts[len(parts)-1]
-	actual, err := decodeWrapper(kind, data)
-	if !a.dryRun {
-		a.runProviderCommand(actual)
-	}
 
+	actual, err := decodeWrapper(kind, data)
 	if err != nil {
 		a.pushError(err)
+	}
+
+	if !a.dryRun {
+		err = a.runProviderCommand(actual)
+		if err != nil {
+			a.pushError(err)
+		}
 	}
 
 	if err := a.pushResult(kind, actual); err != nil {
