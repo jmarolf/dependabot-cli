@@ -46,11 +46,11 @@ func NewAzureProvider(packageManager string, repo string, directory string, cred
 	}
 }
 
-func (a *azureProvider) GetExistingPRs() [][]model.ExistingPR {
+func (a *azureProvider) GetExistingPRs() []model.ExistingPR {
 	getRefsUrl := fmt.Sprintf("https://dev.azure.com/%s/%s/_apis/git/repositories/%s/refs?filter=heads/dependabot/&filterContains=%s&api-version=7.1-preview.1", a.repo.org, a.repo.project, a.repo.repo, a.repo.directory)
 	_, resp, err := sendHttpRequestWithResp[refListResponse]("GET", getRefsUrl, a.repo.cred, nil)
 	if err != nil {
-		return [][]model.ExistingPR{}
+		return []model.ExistingPR{}
 	}
 
 	var existingPRs []model.ExistingPR
@@ -58,14 +58,21 @@ func (a *azureProvider) GetExistingPRs() [][]model.ExistingPR {
 		existingPRs = append(existingPRs, parseDependencyVersion(a.repo.directory, v.Name))
 	}
 
-	return [][]model.ExistingPR{
-		existingPRs,
-	}
+	return existingPRs
 }
 
 // Port returns the port the API is listening on
 func (a *azureProvider) CreatePullRequest(m model.CreatePullRequest) (err error) {
-	// TODO: This branch name should take the directory that dependabot started from into account to avoid branch conflicts.
+	dependencyName, dependencyVersion := getDependencyId(m.Dependencies[0])
+	existingPRs := a.GetExistingPRs()
+	for _, v := range existingPRs {
+		// Exit early if a PR already exists for this package
+		if v.DependencyName == dependencyName && v.DependencyVersion == dependencyVersion {
+			log.Printf("Found an existing PR for %s:%s. Skipping creating a new PR.", dependencyName, dependencyVersion)
+			return
+		}
+	}
+
 	branchName := generateBranchName(a.repo, m.Dependencies[0])
 
 	var fileChanges []interface{}
@@ -188,9 +195,14 @@ func generateBranchName(r azureRepo, d model.Dependency) string {
 		directory = directory + "/"
 	}
 
-	dependencyName := d.Name
-	dependencyVersion := *d.Version
+	dependencyName, dependencyVersion := getDependencyId(d)
 	return fmt.Sprintf("refs/heads/dependabot/%s%s%s-%s", r.packageManger, directory, dependencyName, dependencyVersion)
+}
+
+func getDependencyId(d model.Dependency) (name string, version string) {
+	name = d.Name
+	version = *d.Version
+	return
 }
 
 func parseDependencyVersion(directory string, refName string) model.ExistingPR {
