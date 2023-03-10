@@ -137,8 +137,6 @@ var updateCmd = &cobra.Command{
 			DryRun:        dryRun,
 		}); err != nil {
 			log.Fatalf("failed to run updater: %v", err)
-			// return a non-zero exit code to indicate failure to the caller
-			os.Exit(-1)
 		}
 
 		return nil

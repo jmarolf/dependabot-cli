@@ -231,6 +231,8 @@ func (u *Updater) RunUpdate(ctx context.Context, proxyURL string, apiPort int) e
 	if err != nil {
 		return fmt.Errorf("failed to start exec: %w", err)
 	}
+	defer execResp.Close()
+	
 	// blocks until update is complete or ctl-c
 	ch := make(chan struct{})
 	go func() {
@@ -242,6 +244,14 @@ func (u *Updater) RunUpdate(ctx context.Context, proxyURL string, apiPort int) e
 	case <-ctx.Done():
 		return ctx.Err()
 	case <-ch:
+	}
+
+	execInspect, err := u.cli.ContainerExecInspect(ctx,u.containerID)
+	if err != nil {
+		return fmt.Errorf("failed to inspect docker result: %w",err)
+	}
+	if execInspect.ExitCode != 0 {
+		return fmt.Errorf("docker command failed with exit code %d",execInspect.ExitCode)
 	}
 
 	return nil
